@@ -1,5 +1,6 @@
 <div class="reservation-actions">
-    @php($outstandingBalance = $reservation->total_cost === null ? null : max(0, (float) $reservation->total_cost - (float) ($reservation->amount_paid ?? 0)))
+    @php($paymentTotal = $reservation->total_cost ?? $reservation->estimated_budget)
+    @php($outstandingBalance = $paymentTotal === null ? null : max(0, (float) $paymentTotal - (float) ($reservation->amount_paid ?? 0)))
     @if($reservation->status === 'pending')
         <form method="POST" action="{{ route('admin.reservations.status', $reservation) }}">@csrf @method('PATCH')<input type="hidden" name="status" value="confirmed"><button class="btn btn-sm btn-success quick-action" type="submit">Accept</button></form>
         <form method="POST" action="{{ route('admin.reservations.status', $reservation) }}">@csrf @method('PATCH')<input type="hidden" name="status" value="cancelled"><button class="btn btn-sm btn-danger quick-action" type="submit">Cancel</button></form>
@@ -45,13 +46,14 @@
         <span class="reservation-action-label">Payment</span>
         <form method="POST" action="{{ route('admin.reservations.status', $reservation) }}" data-confirm-message="Update payment details for this reservation?">@csrf @method('PATCH')
             <input type="hidden" name="status" value="{{ $reservation->status }}">
-            <select name="payment_type" class="form-select form-select-sm">
-                <option value="Unpaid" @selected(($reservation->payment_type ?? $reservation->payment_status) === 'Unpaid')>Unpaid</option>
-                <option value="Downpayment" @selected(($reservation->payment_type ?? $reservation->payment_status) === 'Downpayment')>Downpayment</option>
-                <option value="Full Payment" @selected(($reservation->payment_type ?? $reservation->payment_status) === 'Full Payment')>Full Payment</option>
-            </select>
-            <input type="number" name="amount_paid" min="0" step="1" value="{{ old('amount_paid', (int) ($reservation->amount_paid ?? 0)) }}" class="form-control form-control-sm" placeholder="Amount">
-            <button class="btn btn-sm luxury-btn" type="submit">Save</button>
+            <label class="payment-field-label">Total</label>
+            <input type="number" name="estimated_budget" min="0" step="1" value="{{ old('estimated_budget', (int) ($reservation->estimated_budget ?? 0)) }}" class="form-control form-control-sm" placeholder="0">
+            <label class="payment-field-label">Down payment</label>
+            <input type="number" name="amount_paid" min="0" step="1" value="{{ old('amount_paid', (int) ($reservation->amount_paid ?? 0)) }}" class="form-control form-control-sm" placeholder="0">
+            <div class="payment-actions-inline">
+                <button class="btn btn-sm luxury-btn" type="submit">Save</button>
+                <button class="btn btn-sm btn-success" type="submit" name="mark_fully_paid" value="1">Fully paid</button>
+            </div>
         </form>
         @if($outstandingBalance > 0)
             <div class="payment-warning" role="alert">Unpaid balance: &#8369;{{ number_format($outstandingBalance, 2) }}</div>

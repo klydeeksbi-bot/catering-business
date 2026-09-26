@@ -17,8 +17,9 @@ use Throwable;
 
 class AdminController extends Controller
 {
-    public function index()
+    public function index(?Request $request = null)
     {
+        $request ??= request();
         $reservationCount = Reservation::count();
         $inquiryCount = Inquiry::count();
         $serviceCount = Service::count();
@@ -38,7 +39,54 @@ class AdminController extends Controller
             ])
             ->values();
 
-        return view('admin.dashboard', compact('reservationCount', 'inquiryCount', 'serviceCount', 'packageCount', 'calendarEvents'));
+        $selectedDate = $request->query('date');
+        $selectedReservations = $selectedDate
+            ? Reservation::with('package')->whereDate('event_date', $selectedDate)->orderBy('event_time')->get()
+            : collect();
+
+        $monthStart = now()->startOfMonth()->startOfWeek();
+        $monthEnd = now()->endOfMonth()->endOfWeek();
+
+        $bookingsByDate = Reservation::whereNotNull('event_date')
+            ->whereBetween('event_date', [$monthStart->toDateString(), $monthEnd->toDateString()])
+            ->orderBy('event_date')
+            ->orderBy('full_name')
+            ->get()
+            ->groupBy(fn ($reservation) => \Carbon\Carbon::parse($reservation->event_date)->toDateString());
+
+        $calendarDays = [];
+        $cursor = $monthStart->copy();
+
+        while ($cursor->lte($monthEnd)) {
+            $dateKey = $cursor->toDateString();
+            $calendarDays[] = [
+                'date' => $dateKey,
+                'day' => $cursor->day,
+                'isCurrentMonth' => $cursor->month === now()->month,
+                'isSelected' => $selectedDate === $dateKey,
+                'bookings' => $bookingsByDate->get($dateKey, collect())->pluck('full_name')->filter()->values()->all(),
+            ];
+
+            $cursor->addDay();
+        }
+
+        $sidebarCalendar = [
+            'monthLabel' => now()->translatedFormat('F Y'),
+            'days' => $calendarDays,
+            'bookings' => $bookingsByDate->map(fn ($group) => $group->pluck('full_name')->filter()->values()->all())->all(),
+            'selectedDate' => $selectedDate,
+        ];
+
+        return view('admin.dashboard', compact(
+            'reservationCount',
+            'inquiryCount',
+            'serviceCount',
+            'packageCount',
+            'calendarEvents',
+            'sidebarCalendar',
+            'selectedReservations',
+            'selectedDate',
+        ));
     }
 
     public function reservations(Request $request)
@@ -272,7 +320,9 @@ class AdminController extends Controller
             'payment_status' => ['sometimes', 'nullable', 'in:Unpaid,Downpayment,Fully Paid'],
             'payment_type' => ['sometimes', 'nullable', 'in:Unpaid,Downpayment,Full Payment'],
             'total_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'estimated_budget' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'amount_paid' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'mark_fully_paid' => ['sometimes', 'boolean'],
             'event_date' => ['sometimes', 'required', 'date'],
             'event_time' => ['sometimes', 'required', 'string', 'max:20'],
             'package_id' => ['sometimes', 'required', 'exists:packages,id'],
@@ -283,41 +333,49 @@ class AdminController extends Controller
             return back()->withInput()->withErrors(['schedule' => 'Only accepted reservations can have their schedule or package edited.']);
         }
 
-        $hasPaymentUpdate = $request->has('amount_paid') || $request->has('payment_type') || $request->has('payment_status');
+        $hasPaymentUpdate = $request->has('amount_paid')
+            || $request->has('payment_type')
+            || $request->has('payment_status')
+            || $request->has('estimated_budget');
         $hasTotalCostUpdate = $request->has('total_cost');
-        if ($hasPaymentUpdate && ! array_key_exists('total_cost', $data) && $reservation->total_cost === null) {
+        $markFullyPaid = $request->boolean('mark_fully_paid');
+        $totalAmountValue = $data['total_cost'] ?? $reservation->total_cost
+            ?? $data['estimated_budget'] ?? $reservation->estimated_budget;
+
+        if (($hasPaymentUpdate || $hasTotalCostUpdate || $markFullyPaid) && $totalAmountValue === null) {
             return back()->withInput()->withErrors(['total_cost' => 'Enter the contract price before saving payment details.']);
         }
 
         $amountPaid = (float) ($data['amount_paid'] ?? $reservation->amount_paid ?? 0);
-        $totalAmount = (float) ($data['total_cost'] ?? $reservation->total_cost ?? 0);
+        $totalAmount = (float) ($totalAmountValue ?? 0);
 
-        if ($hasPaymentUpdate || $hasTotalCostUpdate) {
-            if ($hasTotalCostUpdate && $data['total_cost'] === null) {
-                return back()->withInput()->withErrors(['total_cost' => 'Enter the contract price before saving payment details.']);
+        if ($markFullyPaid) {
+            $data['payment_status'] = 'Fully Paid';
+            $data['payment_type'] = 'Full Payment';
+            $data['amount_paid'] = $totalAmount;
+            $data['balance'] = 0.0;
+        } elseif ($hasPaymentUpdate || $hasTotalCostUpdate) {
+            if ($amountPaid <= 0) {
+                $data['payment_status'] = 'Unpaid';
+                $data['payment_type'] = $data['payment_type'] ?? 'Unpaid';
+            } elseif ($amountPaid >= $totalAmount) {
+                $data['payment_status'] = 'Fully Paid';
+                $data['payment_type'] = $data['payment_type'] ?? 'Full Payment';
+            } else {
+                $data['payment_status'] = 'Downpayment';
+                $data['payment_type'] = $data['payment_type'] ?? 'Downpayment';
             }
 
-            if ($hasPaymentUpdate) {
-                if ($amountPaid <= 0) {
-                    $data['payment_status'] = 'Unpaid';
-                    $data['payment_type'] = $data['payment_type'] ?? 'Unpaid';
-                } elseif ($amountPaid >= $totalAmount) {
-                    $data['payment_status'] = 'Fully Paid';
-                    $data['payment_type'] = $data['payment_type'] ?? 'Full Payment';
-                } else {
-                    $data['payment_status'] = 'Downpayment';
-                    $data['payment_type'] = $data['payment_type'] ?? 'Downpayment';
-                }
-
-                $data['amount_paid'] = $amountPaid;
-            }
-
-            $data['balance'] = round(max(0, $totalAmount - ($hasPaymentUpdate ? $amountPaid : ($reservation->amount_paid ?? 0))), 2);
+            $data['amount_paid'] = $amountPaid;
+            $data['balance'] = round(max(0, $totalAmount - $amountPaid), 2);
         }
 
-        if (! isset($data['balance']) && $reservation->amount_paid !== null && $reservation->total_cost !== null) {
+        if (! isset($data['balance']) && $reservation->amount_paid !== null && $totalAmountValue !== null) {
+            $totalAmount = (float) ($reservation->total_cost ?? $reservation->estimated_budget);
             $data['balance'] = round(max(0, $totalAmount - ($reservation->amount_paid ?? 0)), 2);
         }
+
+        unset($data['mark_fully_paid']);
 
         $reservation->update($data);
 

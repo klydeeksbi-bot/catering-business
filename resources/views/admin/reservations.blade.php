@@ -98,7 +98,8 @@
                 @forelse($reservations as $reservation)
                     @php($statusLabel = $reservation->status === 'confirmed' ? 'Accepted' : ucfirst($reservation->status))
                     @php($paymentType = $reservation->payment_type ?? $reservation->payment_status ?? 'Unpaid')
-                    @php($outstandingBalance = $reservation->total_cost === null ? null : max(0, (float) $reservation->total_cost - (float) ($reservation->amount_paid ?? 0)))
+                    @php($paymentTotal = $reservation->total_cost ?? $reservation->estimated_budget)
+                    @php($outstandingBalance = $paymentTotal === null ? null : max(0, (float) $paymentTotal - (float) ($reservation->amount_paid ?? 0)))
                     <tr>
                         <td>
                             <div class="fw-semibold text-break">{{ $reservation->reservation_code ?? '—' }}</div>
@@ -196,18 +197,18 @@
                                 @csrf @method('PATCH')
                                 <input type="hidden" name="status" value="{{ $reservation->status }}">
                                 <div class="payment-stack">
-                                    <select name="payment_type" class="form-select form-select-sm">
-                                        <option value="Unpaid" @selected($paymentType === 'Unpaid')>Unpaid</option>
-                                        <option value="Downpayment" @selected($paymentType === 'Downpayment')>Downpayment</option>
-                                        <option value="Full Payment" @selected($paymentType === 'Full Payment')>Full Payment</option>
-                                    </select>
-                                    <label class="payment-field-label">Paid</label>
+                                    <label class="payment-field-label">Estimated total</label>
+                                    <input type="number" name="estimated_budget" min="0" step="1" value="{{ old('estimated_budget', (int) ($reservation->estimated_budget ?? 0)) }}" class="form-control form-control-sm" placeholder="0">
+                                    <label class="payment-field-label">Amount paid</label>
                                     <input type="number" name="amount_paid" min="0" step="1" value="{{ old('amount_paid', (int) ($reservation->amount_paid ?? 0)) }}" class="form-control form-control-sm" placeholder="0">
-                                    <small class="payment-balance">Balance: @if($outstandingBalance !== null)&#8369;{{ number_format($outstandingBalance, 2) }}@else Set contract price @endif</small>
+                                    <small class="payment-balance">Balance: @if($outstandingBalance !== null)&#8369;{{ number_format($outstandingBalance, 2) }}@else Set a total first @endif</small>
                                     @if($outstandingBalance > 0)
                                         <div class="payment-warning" role="alert">Unpaid balance: &#8369;{{ number_format($outstandingBalance, 2) }}</div>
                                     @endif
-                                    <button class="btn btn-sm luxury-btn" type="submit">Save</button>
+                                    <div class="payment-actions-inline">
+                                        <button class="btn btn-sm luxury-btn" type="submit">Save payment</button>
+                                        <button class="btn btn-sm btn-success" type="submit" name="mark_fully_paid" value="1">Fully paid</button>
+                                    </div>
                                 </div>
                             </form>
                         </td>
@@ -331,6 +332,9 @@
     .payment-warning { padding: .4rem .55rem; border: 1px solid #edc467; border-radius: 7px; background: #fff7df; color: #704d00; font-size: .72rem; font-weight: 800; line-height: 1.3; }
     body.dark-mode .payment-warning { border-color: rgba(247, 213, 122, .45); background: rgba(146, 99, 0, .28); color: #f7d57a; }
     .schedule-edit-form { display: flex; flex-direction: column; gap: .35rem; min-width: 130px; }
+    .payment-field-label { display: block; font-size: .68rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: .2rem; }
+    .payment-actions-inline { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .5rem; }
+    .payment-actions-inline .btn { flex: 1; }
     .payment-form { display: flex; }
     .reservation-table-container { width: 100%; max-width: 100%; overflow-x: hidden; overflow-x: clip; }
     .reservations-table { width: 100%; max-width: 100%; table-layout: fixed; border-collapse: collapse; }

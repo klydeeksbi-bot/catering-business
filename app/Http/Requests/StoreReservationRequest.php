@@ -15,7 +15,7 @@ class StoreReservationRequest extends FormRequest
     {
         return [
             'full_name' => ['required', 'string', 'min:2', 'max:255', 'regex:/^[\pL\pN\s\.\'\-]+$/u'],
-            'contact_number' => ['required', 'string', 'regex:/^(?:\+63\d{10}|09\d{9})$/'],
+            'contact_number' => ['bail', 'required', 'string', 'regex:/^(?:\+63\d{10}|09\d{9})$/'],
             'email' => ['required', 'string', 'email:rfc', 'max:255', 'regex:/^[A-Za-z0-9.!#$%&\'*+\/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/'],
             'address' => ['required', 'string', 'min:8', 'max:500', function ($attribute, $value, $fail) {
                 $normalized = trim((string) $value);
