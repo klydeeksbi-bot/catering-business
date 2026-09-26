@@ -1,6 +1,5 @@
 {
     "version": 2,
-    "buildCommand": "npm run build",
     "env": {
         "TMPDIR": "/tmp",
         "TMP": "/tmp"
@@ -9,6 +8,13 @@
         {
             "src": "api/index.php",
             "use": "vercel-php@0.7.3"
+        },
+        {
+            "src": "package.json",
+            "use": "@vercel/static-build",
+            "config": {
+                "distDir": "public"
+            }
         }
     ],
     "routes": [
