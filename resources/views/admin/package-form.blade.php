@@ -54,7 +54,7 @@
                 <input id="package-image" class="form-control" name="image" type="file" accept="image/jpeg,image/png,image/webp">
                 <small class="form-text">Upload a JPG, PNG, or WebP image up to 5 MB. Leave blank to keep the current image.</small>
                 @if($package->image_path)
-                    <img src="{{ asset('storage/' . $package->image_path) }}" alt="Current {{ $package->name }} package image" class="mt-3" style="max-width:240px;max-height:160px;object-fit:cover">
+                    <img src="{{ app(\App\Services\SupabaseStorage::class)->publicUrl($package->image_path) }}" alt="Current {{ $package->name }} package image" class="mt-3" style="max-width:240px;max-height:160px;object-fit:cover">
                 @endif
             </div>
         </div>

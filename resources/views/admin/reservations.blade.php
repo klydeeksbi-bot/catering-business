@@ -147,7 +147,7 @@
                             <div class="contract-cell">
                                 @forelse($reservation->contractFiles() as $contractIndex => $contractPath)
                                     <div class="contract-item">
-                                        <a class="contract-view-link" href="{{ asset('storage/' . $contractPath) }}" target="_blank" rel="noopener">View {{ $contractIndex + 1 }}</a>
+                                        <a class="contract-view-link" href="{{ app(\App\Services\SupabaseStorage::class)->publicUrl($contractPath) }}" target="_blank" rel="noopener">View {{ $contractIndex + 1 }}</a>
                                         <form method="POST" action="{{ route('admin.reservations.contract.delete', [$reservation, $contractIndex]) }}">
                                             @csrf @method('DELETE')
                                             <button type="submit" class="contract-delete" title="Delete contract image" aria-label="Delete contract image">×</button>
@@ -253,7 +253,7 @@
                         <p><span>Venue</span>{{ $reservation->venue }}</p>
                         <p><span>Service contract</span>
                             @if($reservation->service_contract)
-                                <a class="customer-contact" href="{{ asset('storage/' . $reservation->service_contract) }}" target="_blank" rel="noopener">View image</a>
+                                <a class="customer-contact" href="{{ app(\App\Services\SupabaseStorage::class)->publicUrl($reservation->service_contract) }}" target="_blank" rel="noopener">View image</a>
                             @else
                                 <span class="contract-none">None</span>
                             @endif

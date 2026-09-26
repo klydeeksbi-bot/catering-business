@@ -6,8 +6,8 @@ use App\Models\Package;
 use App\Models\GalleryItem;
 use App\Models\Reservation;
 use App\Models\Service;
+use App\Services\SupabaseStorage;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 class PublicController extends Controller
 {
@@ -50,11 +50,11 @@ class PublicController extends Controller
         return view('public.gallery', compact('galleryItems'));
     }
 
-    public function galleryImage(string $path)
+    public function galleryImage(string $path, SupabaseStorage $storage)
     {
-        abort_unless(str_starts_with($path, 'gallery/') && Storage::disk('public')->exists($path), 404);
+        abort_unless(str_starts_with($path, 'gallery/') && ! str_contains($path, '..'), 404);
 
-        return Storage::disk('public')->response($path);
+        return redirect()->away($storage->publicUrl($path));
     }
 
     public function reservation(Request $request)

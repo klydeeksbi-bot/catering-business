@@ -1,59 +1,49 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+## 3YOS Catering
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Laravel serves the existing Blade interface and business workflows. Supabase provides PostgreSQL, Auth for admin accounts, and Storage for public catering images and contract uploads. Sensitive operations remain in Laravel; no Supabase service-role credential is sent to the browser, and no Edge Function is needed.
 
-## About Laravel
+## Supabase Setup
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+1. In the [project SQL editor](https://supabase.com/dashboard/project/vnmzdahsonoshmrwhlym/sql/new), run [`database/supabase/migrations/20260926000000_initial_schema.sql`](database/supabase/migrations/20260926000000_initial_schema.sql). It creates the current schema, RLS policies, the `catering-media` public-read bucket, initial package rows, and Laravel's migration ledger.
+2. In Supabase Project Settings, copy the project URL, anon key, service-role key, and PostgreSQL connection string into `.env`. Use the database connection string from Supabase's Connect panel with SSL required. Keep the service-role key and database password in server-side environment configuration only; never use a `VITE_` prefix for them.
+3. Configure `.env` with `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET=catering-media`, `DB_CONNECTION=pgsql`, and `SUPABASE_DB_URL`. Set `APP_URL`, generate `APP_KEY`, and keep `SESSION_ENCRYPT=true` so the Supabase session token is encrypted at rest. Configure `MAIL_*` for application email and `RECAPTCHA_SITE_KEY` / `RECAPTCHA_SECRET_KEY` for public reservations.
+4. Disable public Auth sign-ups. Configure Supabase Auth email/SMTP settings and allow the password-recovery redirect `APP_URL/admin/reset-password/supabase`. Create the first admin identity in Supabase Auth, then link it to an app profile. For a new, empty app database, run this in the SQL editor after replacing the email and display name:
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+```sql
+insert into public.users (name, email, password, role, supabase_user_id, created_at, updated_at)
+select 'Site Administrator', email, 'supabase-auth-managed', 'full', id, now(), now()
+from auth.users
+where email = 'admin@example.com'
+on conflict (email) do update
+set supabase_user_id = excluded.supabase_user_id, role = 'full', updated_at = now();
+```
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+The `password` profile column is retained for compatibility with the existing Laravel schema; Supabase Auth is the only production login/password authority. Team admin accounts created in the existing admin UI are provisioned in Supabase Auth automatically.
 
-## Learning Laravel
+## Existing Data
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+Before changing the old app's database connection, create a JSON backup from its `/admin/backups` page. Copy the backup JSON to `storage/app/backups/` and copy its referenced files into `storage/app/public/` on the new deployment. Create Supabase Auth accounts with the same email addresses as the old admin profiles; existing Laravel password hashes cannot be used as Supabase passwords, so set new passwords or send Supabase recovery emails. After configuring the new database and keys, import once:
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+```powershell
+php artisan supabase:import-backup backup-YYYYMMDDHHMMSS.json
+```
 
-## Laravel Sponsors
+The importer preserves entity IDs and relationships, maps matching Auth email addresses, uploads local images/contracts, and repairs PostgreSQL identity sequences. It refuses to overwrite populated application tables. Unmatched legacy admin profiles remain unlinked and cannot sign in until linked to a Supabase Auth identity. Create the primary admin profile after import using the SQL above, or promote a linked imported profile by updating its `role` to `full`.
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Run Locally
 
-### Premium Partners
+After applying the SQL migration and configuring `.env`:
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+```powershell
+composer install
+npm.cmd ci
+php artisan key:generate
+php artisan migrate --force
+php artisan serve
+```
 
-## Contributing
+In another terminal, run `npm.cmd run dev`; for a production frontend bundle run `npm.cmd run build`. `php artisan migrate --force` sees the schema migration ledger created by the SQL file and does not recreate the tables. Automated tests use an in-memory SQLite database and fake Supabase HTTP requests: run `php artisan test`.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## Data Access
 
-## Code of Conduct
-
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+The server-rendered app continues to use its existing Laravel routes, validation, authorization middleware, mail, and Eloquent models. Laravel connects to Supabase PostgreSQL using the trusted server-side `SUPABASE_DB_URL`; Supabase Auth validates admin passwords and provisions team users; Supabase Storage serves the existing image workflows. RLS is enabled on app and Laravel support tables. Policies allow public reads only for the public catalog/gallery, role-scoped reads and writes for authenticated admins, and no direct anonymous writes to reservations or inquiries (those forms remain validated and rate-limited through Laravel). Storage is public-read as before and full-admin-write through RLS; Laravel uploads use the private service-role key.

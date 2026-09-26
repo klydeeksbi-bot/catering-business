@@ -7,12 +7,13 @@ use App\Models\Inquiry;
 use App\Models\Package;
 use App\Models\Reservation;
 use App\Models\Service;
+use App\Services\SupabaseStorage;
 use Illuminate\Database\Eloquent\Builder;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Storage;
+use Throwable;
 
 class AdminController extends Controller
 {
@@ -331,8 +332,14 @@ class AdminController extends Controller
         ]);
 
         $paths = $reservation->service_contracts ?? [];
-        foreach ($data['service_contract'] as $file) {
-            $paths[] = $file->store('service-contracts', 'public');
+        try {
+            foreach ($data['service_contract'] as $file) {
+                $paths[] = app(SupabaseStorage::class)->upload($file, 'service-contracts');
+            }
+        } catch (Throwable $exception) {
+            report($exception);
+
+            return back()->withInput()->with('error', 'The contract image could not be uploaded. Please try again.');
         }
         $reservation->update(['service_contracts' => $paths]);
 
@@ -344,7 +351,7 @@ class AdminController extends Controller
         $files = $reservation->contractFiles();
         abort_unless(isset($files[$contract]), 404);
 
-        Storage::disk('public')->delete($files[$contract]);
+        app(SupabaseStorage::class)->delete($files[$contract]);
         $files = array_values(array_diff($files, [$files[$contract]]));
 
         $reservation->update([
@@ -369,7 +376,7 @@ class AdminController extends Controller
 
         $query->where(function (Builder $matches) use ($pattern, $term): void {
             $matches->whereRaw('LOWER(COALESCE(reservation_code, \'\')) LIKE ?', [$pattern])
-                ->orWhereRaw('LOWER(CAST(id AS CHAR)) LIKE ?', [$pattern])
+                ->orWhereRaw('LOWER(CAST(id AS TEXT)) LIKE ?', [$pattern])
                 ->orWhereRaw('LOWER(COALESCE(full_name, \'\')) LIKE ?', [$pattern])
                 ->orWhereRaw('LOWER(COALESCE(email, \'\')) LIKE ?', [$pattern])
                 ->orWhereRaw('LOWER(COALESCE(contact_number, \'\')) LIKE ?', [$pattern])
@@ -380,7 +387,7 @@ class AdminController extends Controller
                 ->orWhereRaw('LOWER(COALESCE(payment_status, \'\')) LIKE ?', [$pattern])
                 ->orWhereRaw('LOWER(COALESCE(payment_type, \'\')) LIKE ?', [$pattern])
                 ->orWhereRaw('LOWER(COALESCE(service_contract, \'\')) LIKE ?', [$pattern])
-                ->orWhereRaw('LOWER(COALESCE(CAST(service_contracts AS CHAR), \'\')) LIKE ?', [$pattern])
+                ->orWhereRaw('LOWER(COALESCE(CAST(service_contracts AS TEXT), \'\')) LIKE ?', [$pattern])
                 ->orWhereHas('package', fn (Builder $package) => $package->whereRaw('LOWER(COALESCE(name, \'\')) LIKE ?', [$pattern]))
                 ->orWhereHas('client', fn (Builder $client) => $client->whereRaw('LOWER(COALESCE(name, \'\')) LIKE ?', [$pattern]));
 

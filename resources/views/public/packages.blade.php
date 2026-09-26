@@ -31,7 +31,7 @@
                     @if($package->is_featured)<div class="package-ribbon">Most popular</div>@endif
                     <div class="package-image-wrap">
                         @if($package->image_path)
-                            <img src="{{ asset('storage/' . $package->image_path) }}" alt="{{ $package->name }} catering package" loading="lazy">
+                            <img src="{{ app(\App\Services\SupabaseStorage::class)->publicUrl($package->image_path) }}" alt="{{ $package->name }} catering package" loading="lazy">
                         @else
                             <span>{{ $package->name }} package</span>
                         @endif

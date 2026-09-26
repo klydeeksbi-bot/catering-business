@@ -2,13 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Auth\Events\PasswordReset;
 use App\Models\User;
+use App\Services\SupabaseAuth;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Password;
 use App\Models\ActivityLog;
-use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
@@ -22,27 +19,42 @@ class AuthController extends Controller
         $request->validate(['email' => ['required', 'email'], 'password' => ['required', 'string']]);
         $email = $request->input('email');
         $password = $request->input('password');
-        $expectedEmail = env('ADMIN_EMAIL', 'admin@3yos.com');
-        $expectedPassword = env('ADMIN_PASSWORD', 'admin123');
 
-        $user = User::where('email', $email)->first();
-        $isPrimaryAdmin = $email === $expectedEmail && $password === $expectedPassword;
-        $isFullAdminUser = $user && $user->role === 'full' && Hash::check($password, $user->password);
-        $isTeamAdmin = $user && $user->role === 'limited' && Hash::check($password, $user->password);
+        try {
+            $authSession = app(SupabaseAuth::class)->signIn($email, $password);
+        } catch (\Throwable $exception) {
+            report($exception);
 
-        if ($isPrimaryAdmin || $isFullAdminUser || $isTeamAdmin) {
-            $request->session()->regenerate();
-            $request->session()->put('is_admin', true);
-            $request->session()->put('admin_role', $isPrimaryAdmin || $isFullAdminUser ? 'full' : 'limited');
-            $request->session()->put('admin_user_id', $user?->id);
-            $request->session()->put('admin_name', $isPrimaryAdmin ? 'Primary Administrator' : $user->name);
-            $request->session()->put('admin_email', $email);
-            $this->logAuthentication($request, 'Signed in');
-
-            return redirect()->route('admin.dashboard');
+            return back()->withInput($request->only('email'))->with('error', 'Admin sign-in is temporarily unavailable. Please try again shortly.');
         }
 
-        return back()->with('error', 'Invalid admin credentials.');
+        $authId = data_get($authSession, 'user.id');
+        $user = $authId
+            ? User::where('supabase_user_id', $authId)->whereRaw('LOWER(email) = ?', [strtolower($email)])->first()
+            : null;
+
+        if (! $user || ! in_array($user->role, ['full', 'limited'], true) || ! filled(data_get($authSession, 'access_token'))) {
+            if ($accessToken = data_get($authSession, 'access_token')) {
+                try {
+                    app(SupabaseAuth::class)->logout($accessToken);
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+            }
+
+            return back()->withInput($request->only('email'))->with('error', 'Invalid admin credentials.');
+        }
+
+        $request->session()->regenerate();
+        $request->session()->put('is_admin', true);
+        $request->session()->put('admin_role', $user->role);
+        $request->session()->put('admin_user_id', $user->id);
+        $request->session()->put('admin_name', $user->name);
+        $request->session()->put('admin_email', $email);
+        $request->session()->put('supabase_access_token', $authSession['access_token']);
+        $this->logAuthentication($request, 'Signed in');
+
+        return redirect()->route('admin.dashboard');
     }
 
     public function showForgotPasswordForm()
@@ -54,25 +66,18 @@ class AuthController extends Controller
     {
         $request->validate(['email' => ['required', 'email']]);
 
-        $status = Password::sendResetLink($request->only('email'));
+        try {
+            app(SupabaseAuth::class)->sendPasswordReset(
+                $request->input('email'),
+                route('password.reset', ['token' => 'supabase'])
+            );
+        } catch (\Throwable $exception) {
+            report($exception);
 
-        if ($status !== Password::RESET_LINK_SENT) {
             return back()->with('error', 'We could not send the reset link. Please try again shortly.');
         }
 
-        $user = User::where('email', $request->email)->first();
-        $resetUrl = $user ? route('password.reset', ['token' => Password::broker()->createToken($user), 'email' => $user->email]) : null;
-
-        if (config('mail.default') === 'log' || config('mail.default') === 'array') {
-            return back()->with(
-                'status',
-                $resetUrl
-                    ? 'Development mode: password reset link generated successfully: ' . $resetUrl . ' (also written to the Laravel log).'
-                    : 'Password reset link generated successfully. Check the Laravel log for the full reset URL.'
-            );
-        }
-
-        return back()->with('status', 'If that Team Admin email exists, a password reset link has been sent.');
+        return back()->with('status', 'If an admin account uses that address, a password reset link has been sent.');
     }
 
     public function showResetPasswordForm(Request $request, string $token)
@@ -83,19 +88,35 @@ class AuthController extends Controller
     public function resetPassword(Request $request)
     {
         $request->validate([
-            'token' => ['required'],
+            'access_token' => ['required', 'string'],
             'email' => ['required', 'email'],
             'password' => ['required', 'confirmed', 'min:8'],
         ]);
 
-        $status = Password::reset($request->only('email', 'password', 'password_confirmation', 'token'), function (User $user, string $password) {
-            $user->forceFill(['password' => Hash::make($password), 'remember_token' => Str::random(60)])->save();
-            event(new PasswordReset($user));
-        });
+        try {
+            $supabase = app(SupabaseAuth::class);
+            $authUser = $supabase->getUser($request->input('access_token'));
+            $user = User::where('supabase_user_id', data_get($authUser, 'id'))
+                ->whereRaw('LOWER(email) = ?', [strtolower($request->input('email'))])
+                ->first();
 
-        return $status === Password::PASSWORD_RESET
-            ? redirect()->route('admin.login')->with('success', 'Password reset successfully. You can now sign in.')
-            : back()->withInput($request->only('email'))->with('error', 'This reset link is invalid or has expired.');
+            if (! $user) {
+                return back()->withInput($request->only('email'))->with('error', 'This reset link is invalid or has expired.');
+            }
+
+            $supabase->updatePassword($request->input('access_token'), $request->input('password'));
+            try {
+                $supabase->logout($request->input('access_token'));
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        } catch (\Throwable $exception) {
+            report($exception);
+
+            return back()->withInput($request->only('email'))->with('error', 'This reset link is invalid or has expired.');
+        }
+
+        return redirect()->route('admin.login')->with('success', 'Password reset successfully. You can now sign in.');
     }
 
     public function logout(Request $request)
@@ -103,6 +124,16 @@ class AuthController extends Controller
         if ($request->session()->get('is_admin')) {
             $this->logAuthentication($request, 'Signed out');
         }
+
+        $accessToken = $request->session()->get('supabase_access_token');
+        if ($accessToken) {
+            try {
+                app(SupabaseAuth::class)->logout($accessToken);
+            } catch (\Throwable $exception) {
+                report($exception);
+            }
+        }
+
         $request->session()->invalidate();
         $request->session()->regenerateToken();
 

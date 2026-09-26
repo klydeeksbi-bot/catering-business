@@ -31,7 +31,7 @@
 
                 <form method="POST" action="{{ route('password.update') }}">
                     @csrf
-                    <input type="hidden" name="token" value="{{ $token }}">
+                    <input type="hidden" id="supabase-access-token" name="access_token">
                     <div class="mb-3">
                         <label class="form-label" for="email">Email</label>
                         <input id="email" type="email" name="email" value="{{ old('email', $email) }}" class="form-control form-control-lg" required>
@@ -74,6 +74,11 @@
                     }
                     setupPasswordToggle('password', 'toggle-password-reset');
                     setupPasswordToggle('password_confirmation', 'toggle-password-confirm');
+
+                    const recoveryToken = new URLSearchParams(window.location.hash.slice(1)).get('access_token');
+                    if (recoveryToken) {
+                        document.getElementById('supabase-access-token').value = recoveryToken;
+                    }
                 </script>
             </div>
         </div>

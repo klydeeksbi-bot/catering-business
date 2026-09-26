@@ -5,20 +5,31 @@ namespace App\Services;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Throwable;
 
 class AdminPasswordVerifier
 {
     public function verify(Request $request, string $password): bool
     {
         $user = User::find($request->session()->get('admin_user_id'));
-        if ($user && Hash::check($password, $user->password)) {
-            return true;
+
+        if ($user?->supabase_user_id) {
+            try {
+                $authSession = app(SupabaseAuth::class)->signIn((string) $user->email, $password);
+                $valid = data_get($authSession, 'user.id') === $user->supabase_user_id;
+                $accessToken = data_get($authSession, 'access_token');
+                if ($accessToken) {
+                    app(SupabaseAuth::class)->logout($accessToken);
+                }
+
+                return $valid;
+            } catch (Throwable $exception) {
+                report($exception);
+
+                return false;
+            }
         }
 
-        $adminEmail = (string) env('ADMIN_EMAIL', 'admin@3yos.com');
-        $adminPassword = (string) env('ADMIN_PASSWORD', 'admin123');
-
-        return hash_equals($adminEmail, (string) $request->session()->get('admin_email', ''))
-            && hash_equals($adminPassword, $password);
+        return app()->environment('testing') && $user !== null && Hash::check($password, $user->password);
     }
 }
